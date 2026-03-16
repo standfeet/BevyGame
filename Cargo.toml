@@ -1,0 +1,21 @@
+[package]
+name = "bevy-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.18" }
+web-sys = { version = "0.3", features = ["Document", "HtmlElement", "Window", "DomTokenList"] }
+
+# WASM向け最適化
+[profile.release]
+opt-level = "z"
+lto = "thin"
+codegen-units = 1
+
+# 開発時のコンパイル高速化
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
