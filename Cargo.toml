@@ -1,10 +1,38 @@
 [package]
-name = "bevy-app"
+name = "BevyGame"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.18" }
+avian2d = { version = "0.5", default-features = false, features = ["2d", "f32", "default-collider", "parry-f32", "debug-plugin", "bevy_scene", "bevy_picking"] }
+# 3Dを除外し、2D+UIのみに絞ることでコンパイル時間を大幅に短縮
+bevy = { version = "0.18", default-features = false, features = [
+    # 2D描画
+    "2d",
+    # UI (テキスト表示等)
+    "bevy_ui",
+    # 基盤
+    "bevy_asset",
+    "bevy_winit",
+    "bevy_state",
+    "bevy_log",
+    "bevy_text",
+    "bevy_color",
+    "bevy_sprite",
+    "bevy_mesh",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_sprite_render",
+    # 画像フォーマット
+    "png",
+    # プラットフォーム
+    "std",
+    "webgl2",
+    "default_font",
+    "multi_threaded",
+] }
+getrandom = { version = "0.2", features = ["js"] }
+rand = "0.8"
 web-sys = { version = "0.3", features = ["Document", "HtmlElement", "Window", "DomTokenList"] }
 
 # WASM向け最適化

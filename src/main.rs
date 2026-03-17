@@ -1,8 +1,14 @@
+mod block;
+mod components;
+mod constants;
+mod systems;
+
+use avian2d::prelude::*;
 use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
-use web_sys::wasm_bindgen::JsCast;
 
-const ASPECT_RATIO: f32 = 16.0 / 9.0;
+use components::*;
+use systems::*;
 
 fn main() {
     App::new()
@@ -10,7 +16,7 @@ fn main() {
             DefaultPlugins
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "Bevy App".to_string(),
+                        title: "積み木ゲーム".to_string(),
                         canvas: Some("#bevy-canvas".to_string()),
                         fit_canvas_to_parent: true,
                         prevent_default_event_handling: true,
@@ -23,80 +29,46 @@ fn main() {
                     ..default()
                 }),
         )
-        .add_systems(Startup, (setup, hide_loading_screen))
-        .add_systems(Update, update_viewport)
+        .add_plugins(PhysicsPlugins::new(FixedUpdate).with_length_unit(50.0))
+        .add_plugins(PhysicsDebugPlugin)
+        .insert_resource(Time::<Fixed>::from_hz(120.0))
+        .insert_resource(Gravity(Vec2::NEG_Y * 490.0))
+        .insert_resource(SubstepCount(50))
+        .insert_resource(BlockColors(vec![
+            Color::srgb(0.93, 0.35, 0.35),
+            Color::srgb(0.35, 0.75, 0.93),
+            Color::srgb(0.45, 0.90, 0.45),
+            Color::srgb(0.95, 0.80, 0.25),
+            Color::srgb(0.85, 0.50, 0.85),
+            Color::srgb(1.00, 0.60, 0.30),
+        ]))
+        .init_resource::<GameData>()
+        .init_state::<GameState>()
+        // 起動
+        .add_systems(Startup, (setup_camera, hide_loading_screen))
+        // タイトル
+        .add_systems(OnEnter(GameState::Title), setup_title)
+        .add_systems(Update, title_input.run_if(in_state(GameState::Title)))
+        .add_systems(OnExit(GameState::Title), cleanup_ui)
+        // プレイ
+        .add_systems(OnEnter(GameState::Playing), setup_game)
+        .add_systems(
+            Update,
+            (
+                move_active_block,
+                drop_block,
+                check_block_settled,
+                spawn_next_block,
+                check_death,
+                update_score_text,
+                update_preview,
+            )
+                .run_if(in_state(GameState::Playing)),
+        )
+        .add_systems(OnExit(GameState::Playing), cleanup_game)
+        // ゲームオーバー
+        .add_systems(OnEnter(GameState::GameOver), setup_gameover)
+        .add_systems(Update, gameover_input.run_if(in_state(GameState::GameOver)))
+        .add_systems(OnExit(GameState::GameOver), cleanup_ui)
         .run();
-}
-
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    asset_server: Res<AssetServer>,
-) {
-    commands.spawn(Camera2d);
-
-    // サンプル: 画面中央に円を表示
-    commands.spawn((
-        Mesh2d(meshes.add(Circle::new(50.0))),
-        MeshMaterial2d(materials.add(Color::srgb(0.2, 0.7, 0.9))),
-    ));
-
-    let font = asset_server.load("fonts/NotoSansJP-Regular.otf");
-
-    // 日本語テキスト表示
-    commands.spawn((
-        Text::new("こんにちは、Bevy！"),
-        TextFont {
-            font,
-            font_size: 40.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
-    ));
-}
-
-fn update_viewport(windows: Query<&Window>, mut cameras: Query<&mut Camera, With<Camera2d>>) {
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let Ok(mut camera) = cameras.single_mut() else {
-        return;
-    };
-
-    let window_width = window.physical_width();
-    let window_height = window.physical_height();
-    if window_width == 0 || window_height == 0 {
-        return;
-    }
-
-    let window_aspect = window_width as f32 / window_height as f32;
-
-    let (vp_width, vp_height) = if window_aspect > ASPECT_RATIO {
-        let h = window_height;
-        let w = (h as f32 * ASPECT_RATIO) as u32;
-        (w, h)
-    } else {
-        let w = window_width;
-        let h = (w as f32 / ASPECT_RATIO) as u32;
-        (w, h)
-    };
-
-    let offset_x = (window_width - vp_width) / 2;
-    let offset_y = (window_height - vp_height) / 2;
-
-    camera.viewport = Some(bevy::camera::Viewport {
-        physical_position: UVec2::new(offset_x, offset_y),
-        physical_size: UVec2::new(vp_width, vp_height),
-        ..default()
-    });
-}
-
-fn hide_loading_screen() {
-    let window = web_sys::window().expect("no window");
-    let document = window.document().expect("no document");
-    if let Some(el) = document.get_element_by_id("loading-screen") {
-        let html_el: web_sys::HtmlElement = el.unchecked_into();
-        let _ = html_el.class_list().add_1("fade-out");
-    }
 }

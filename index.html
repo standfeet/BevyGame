@@ -2,8 +2,8 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bevy App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>積み木ゲーム</title>
     <link data-trunk rel="rust" data-wasm-opt="z" />
     <link data-trunk rel="copy-dir" href="assets" />
     <style>
@@ -17,6 +17,7 @@
             display: flex;
             justify-content: center;
             align-items: center;
+            touch-action: none;
         }
         #bevy-container {
             width: 100%;
@@ -57,9 +58,46 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        /* 画面サイズ警告 */
+        #size-warning {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: #1a1a2e;
+            z-index: 200;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 24px;
+        }
+        #size-warning .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        #size-warning .message {
+            color: rgba(255, 255, 255, 0.85);
+            font-family: system-ui, sans-serif;
+            font-size: 16px;
+            line-height: 1.6;
+        }
+        #size-warning .sub {
+            color: rgba(255, 255, 255, 0.5);
+            font-family: system-ui, sans-serif;
+            font-size: 13px;
+            margin-top: 12px;
+        }
     </style>
 </head>
 <body>
+    <!-- 画面サイズ警告 -->
+    <div id="size-warning">
+        <div class="icon">&#x1F4F1;</div>
+        <p class="message">画面サイズが小さすぎます。<br>ブラウザのウィンドウを<br>大きくしてください。</p>
+        <p class="sub">最低 360 x 580 px 必要です</p>
+    </div>
+
     <div id="loading-screen">
         <div class="spinner"></div>
         <p class="loading-text">Loading…</p>
@@ -67,5 +105,28 @@
     <div id="bevy-container">
         <canvas id="bevy-canvas"></canvas>
     </div>
+
+    <script>
+        const MIN_WIDTH = 360;
+        const MIN_HEIGHT = 580;
+
+        function checkSize() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            const warning = document.getElementById('size-warning');
+            const container = document.getElementById('bevy-container');
+
+            if (w < MIN_WIDTH || h < MIN_HEIGHT) {
+                warning.style.display = 'flex';
+                container.style.display = 'none';
+            } else {
+                warning.style.display = 'none';
+                container.style.display = 'block';
+            }
+        }
+
+        checkSize();
+        window.addEventListener('resize', checkSize);
+    </script>
 </body>
 </html>
