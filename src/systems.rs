@@ -14,12 +14,27 @@ pub fn setup_camera(mut commands: Commands) {
 pub fn hide_loading_screen() {
     use web_sys::wasm_bindgen::JsCast;
 
-    let window = web_sys::window().expect("no window");
-    let document = window.document().expect("no document");
-    if let Some(el) = document.get_element_by_id("loading-screen") {
-        let html_el: web_sys::HtmlElement = el.unchecked_into();
-        let _ = html_el.class_list().add_1("fade-out");
-    }
+    let Some(window) = web_sys::window() else { return };
+    let Some(document) = window.document() else { return };
+    let Some(el) = document.get_element_by_id("loading-screen") else { return };
+    let html_el: web_sys::HtmlElement = el.unchecked_into();
+    let _ = html_el.class_list().add_1("fade-out");
+}
+
+// === 共通入力ヘルパー ===
+
+/// マウスまたはタッチのリリースを検出
+fn any_just_released(mouse: &ButtonInput<MouseButton>, touches: &Touches) -> bool {
+    mouse.just_released(MouseButton::Left) || touches.any_just_released()
+}
+
+/// 画面上のポインタ位置を取得（タッチ優先）
+fn pointer_position(window: &Window, touches: &Touches) -> Option<Vec2> {
+    touches
+        .iter()
+        .next()
+        .map(|t| t.position())
+        .or_else(|| window.cursor_position())
 }
 
 // === タイトル画面 ===
@@ -66,7 +81,7 @@ pub fn title_input(
     touches: Res<Touches>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
-    if mouse.just_released(MouseButton::Left) || touches.any_just_released() {
+    if any_just_released(&mouse, &touches) {
         next_state.set(GameState::Playing);
     }
 }
@@ -81,6 +96,12 @@ pub fn setup_game(
     *game_data = GameData::default();
     let font = asset_server.load(FONT_PATH);
 
+    spawn_terrain(&mut commands);
+    spawn_score_ui(&mut commands, font);
+    spawn_preview_line(&mut commands);
+}
+
+fn spawn_terrain(commands: &mut Commands) {
     // 地面
     commands.spawn((
         GameEntity,
@@ -92,42 +113,30 @@ pub fn setup_game(
         Transform::from_xyz(0.0, GROUND_Y, 0.0),
         RigidBody::Static,
         Collider::rectangle(GAME_WIDTH, WALL_THICKNESS),
-        Friction::new(0.9),
+        Friction::new(GROUND_FRICTION),
         Restitution::new(0.0),
     ));
 
     let ground_top = GROUND_Y + WALL_THICKNESS / 2.0;
     let wall_center_y = ground_top + WALL_HEIGHT / 2.0;
+    let wall_x_offset = GAME_WIDTH / 2.0 - WALL_THICKNESS / 2.0;
 
-    // 左壁
-    commands.spawn((
-        GameEntity,
-        Sprite {
-            color: Color::srgb(0.25, 0.25, 0.3),
-            custom_size: Some(Vec2::new(WALL_THICKNESS, WALL_HEIGHT)),
-            ..default()
-        },
-        Transform::from_xyz(-GAME_WIDTH / 2.0 + WALL_THICKNESS / 2.0, wall_center_y, 0.0),
-        RigidBody::Static,
-        Collider::rectangle(WALL_THICKNESS, WALL_HEIGHT),
-        Friction::new(0.5),
-        Restitution::new(0.0),
-    ));
-
-    // 右壁
-    commands.spawn((
-        GameEntity,
-        Sprite {
-            color: Color::srgb(0.25, 0.25, 0.3),
-            custom_size: Some(Vec2::new(WALL_THICKNESS, WALL_HEIGHT)),
-            ..default()
-        },
-        Transform::from_xyz(GAME_WIDTH / 2.0 - WALL_THICKNESS / 2.0, wall_center_y, 0.0),
-        RigidBody::Static,
-        Collider::rectangle(WALL_THICKNESS, WALL_HEIGHT),
-        Friction::new(0.5),
-        Restitution::new(0.0),
-    ));
+    // 左右の壁
+    for sign in [-1.0_f32, 1.0] {
+        commands.spawn((
+            GameEntity,
+            Sprite {
+                color: Color::srgb(0.25, 0.25, 0.3),
+                custom_size: Some(Vec2::new(WALL_THICKNESS, WALL_HEIGHT)),
+                ..default()
+            },
+            Transform::from_xyz(sign * wall_x_offset, wall_center_y, 0.0),
+            RigidBody::Static,
+            Collider::rectangle(WALL_THICKNESS, WALL_HEIGHT),
+            Friction::new(WALL_FRICTION),
+            Restitution::new(0.0),
+        ));
+    }
 
     // 背景
     commands.spawn((
@@ -139,8 +148,9 @@ pub fn setup_game(
         },
         Transform::from_xyz(0.0, 0.0, -10.0),
     ));
+}
 
-    // スコアUI
+fn spawn_score_ui(commands: &mut Commands, font: Handle<Font>) {
     commands
         .spawn((
             UiRoot,
@@ -163,8 +173,9 @@ pub fn setup_game(
                 TextColor(Color::WHITE),
             ));
         });
+}
 
-    // プレビューライン
+fn spawn_preview_line(commands: &mut Commands) {
     commands.spawn((
         GameEntity,
         PreviewIndicator,
@@ -186,18 +197,8 @@ pub fn move_active_block(
 ) {
     let Ok(window) = windows.single() else { return };
     let Ok((camera, cam_transform)) = cameras.single() else { return };
-
-    // タッチ中の指の位置 or マウス位置を取得
-    let screen_pos = touches
-        .iter()
-        .next()
-        .map(|t| t.position())
-        .or_else(|| window.cursor_position());
-
-    let Some(pos) = screen_pos else { return };
-    let Ok(world_pos) = camera.viewport_to_world_2d(cam_transform, pos) else {
-        return;
-    };
+    let Some(pos) = pointer_position(window, &touches) else { return };
+    let Ok(world_pos) = camera.viewport_to_world_2d(cam_transform, pos) else { return };
 
     let half_zone = DROP_ZONE_WIDTH / 2.0 - 10.0;
     let clamped_x = world_pos.x.clamp(-half_zone, half_zone);
@@ -214,9 +215,9 @@ pub fn drop_block(
     active_blocks: Query<Entity, With<ActiveBlock>>,
     mut game_data: ResMut<GameData>,
 ) {
-    // マウス: クリックで落下
-    // タッチ: 指を離した時に落下（ドラッグで位置調整してからリリース）
-    if !mouse.just_pressed(MouseButton::Left) && !touches.any_just_released() {
+    // マウス: クリックで落下 / タッチ: リリースで落下
+    let should_drop = mouse.just_pressed(MouseButton::Left) || touches.any_just_released();
+    if !should_drop {
         return;
     }
 
@@ -231,7 +232,7 @@ pub fn drop_block(
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity, reason = "Bevy query filters require complex types")]
 pub fn check_block_settled(
     mut game_data: ResMut<GameData>,
     time: Res<Time>,
@@ -239,15 +240,15 @@ pub fn check_block_settled(
     mut commands: Commands,
     unsettled: Query<Entity, (With<Block>, Without<ActiveBlock>, Without<SettledBlock>)>,
 ) {
-    if game_data.has_active_block {
+    if game_data.has_active_block || blocks.is_empty() {
         return;
     }
 
-    let all_slow = blocks.iter().all(|vel| vel.length() < 5.0);
+    let all_settled = blocks.iter().all(|vel| vel.length() < SETTLE_VELOCITY_THRESHOLD);
 
-    if all_slow && !blocks.is_empty() {
+    if all_settled {
         game_data.settle_timer += time.delta_secs();
-        if game_data.settle_timer > BLOCK_SETTLE_TIME {
+        if game_data.settle_timer > SETTLE_WAIT_SECS {
             for entity in &unsettled {
                 commands.entity(entity).insert(SettledBlock);
             }
@@ -259,24 +260,20 @@ pub fn check_block_settled(
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity, reason = "Bevy query filters require complex types")]
 pub fn spawn_next_block(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    colors: Res<BlockColors>,
     mut game_data: ResMut<GameData>,
     active_blocks: Query<&ActiveBlock>,
     unsettled: Query<Entity, (With<Block>, Without<ActiveBlock>, Without<SettledBlock>)>,
 ) {
-    if game_data.has_active_block || !active_blocks.is_empty() {
-        return;
-    }
-    if !unsettled.is_empty() {
+    if game_data.has_active_block || !active_blocks.is_empty() || !unsettled.is_empty() {
         return;
     }
 
-    spawn_block(&mut commands, &mut meshes, &mut materials, &colors, 0.0);
+    spawn_block(&mut commands, &mut meshes, &mut materials, 0.0);
     game_data.has_active_block = true;
 }
 
@@ -284,11 +281,9 @@ pub fn check_death(
     blocks: Query<&Transform, (With<Block>, Without<ActiveBlock>)>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
-    for transform in &blocks {
-        if transform.translation.y < DEATH_Y {
-            next_state.set(GameState::GameOver);
-            return;
-        }
+    let has_fallen = blocks.iter().any(|t| t.translation.y < DEATH_Y);
+    if has_fallen {
+        next_state.set(GameState::GameOver);
     }
 }
 
@@ -298,7 +293,7 @@ pub fn update_score_text(game_data: Res<GameData>, mut query: Query<&mut Text, W
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity, reason = "Bevy query filters require complex types")]
 pub fn update_preview(
     active_blocks: Query<&Transform, With<ActiveBlock>>,
     mut preview: Query<
@@ -392,7 +387,7 @@ pub fn gameover_input(
     touches: Res<Touches>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
-    if mouse.just_released(MouseButton::Left) || touches.any_just_released() {
+    if any_just_released(&mouse, &touches) {
         next_state.set(GameState::Playing);
     }
 }

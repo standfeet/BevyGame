@@ -5,49 +5,64 @@ use rand::Rng;
 use crate::components::*;
 use crate::constants::*;
 
+/// ブロックの形状
 #[derive(Clone, Copy)]
-pub enum BlockShape {
+enum BlockShape {
     Rectangle,
     Triangle,
     Trapezoid,
     Circle,
 }
 
-fn random_block_shape() -> (BlockShape, f32, f32) {
+/// ランダムな形状とサイズを生成
+fn random_shape_and_size() -> (BlockShape, f32, f32) {
     let mut rng = rand::thread_rng();
-    let shape_idx = rng.gen_range(0..4);
     let width = rng.gen_range(BLOCK_MIN_SIZE..=BLOCK_MAX_SIZE);
     let height = rng.gen_range(BLOCK_MIN_SIZE..=BLOCK_MAX_SIZE);
 
-    match shape_idx {
-        0 => (BlockShape::Rectangle, width, height),
-        1 => (BlockShape::Triangle, width, height),
-        2 => (BlockShape::Trapezoid, width, height),
-        _ => (BlockShape::Circle, width, width),
+    let shape = match rng.gen_range(0..4u8) {
+        0 => BlockShape::Rectangle,
+        1 => BlockShape::Triangle,
+        2 => BlockShape::Trapezoid,
+        _ => BlockShape::Circle,
+    };
+
+    match shape {
+        BlockShape::Circle => (shape, width, width),
+        _ => (shape, width, height),
     }
+}
+
+/// 台形の頂点座標を計算（コライダーとメッシュで共有）
+fn trapezoid_vertices(width: f32, height: f32) -> [(f32, f32); 4] {
+    let hw = width / 2.0;
+    let thw = width * TRAPEZOID_TOP_RATIO / 2.0;
+    let hh = height / 2.0;
+    [(-hw, -hh), (hw, -hh), (thw, hh), (-thw, hh)]
+}
+
+/// 三角形の頂点座標を計算（コライダーとメッシュで共有）
+fn triangle_vertices(width: f32, height: f32) -> [Vec2; 3] {
+    [
+        Vec2::new(-width / 2.0, -height / 2.0),
+        Vec2::new(width / 2.0, -height / 2.0),
+        Vec2::new(0.0, height / 2.0),
+    ]
 }
 
 fn create_collider(shape: BlockShape, width: f32, height: f32) -> Collider {
     match shape {
         BlockShape::Rectangle => Collider::rectangle(width, height),
         BlockShape::Triangle => {
-            let verts = vec![
-                Vec2::new(-width / 2.0, -height / 2.0),
-                Vec2::new(width / 2.0, -height / 2.0),
-                Vec2::new(0.0, height / 2.0),
-            ];
-            Collider::convex_hull(verts).unwrap_or(Collider::rectangle(width, height))
+            let verts = triangle_vertices(width, height);
+            Collider::convex_hull(verts.to_vec())
+                .unwrap_or_else(|| Collider::rectangle(width, height))
         }
         BlockShape::Trapezoid => {
-            let top_w = width * 0.6;
-            let (hw, thw, hh) = (width / 2.0, top_w / 2.0, height / 2.0);
-            let verts = vec![
-                Vec2::new(-hw, -hh),
-                Vec2::new(hw, -hh),
-                Vec2::new(thw, hh),
-                Vec2::new(-thw, hh),
-            ];
-            Collider::convex_hull(verts).unwrap_or(Collider::rectangle(width, height))
+            let verts = trapezoid_vertices(width, height);
+            let vec2s: Vec<Vec2> = verts.iter().map(|&(x, y)| Vec2::new(x, y)).collect();
+            Collider::convex_hull(vec2s)
+                .unwrap_or_else(|| Collider::rectangle(width, height))
         }
         BlockShape::Circle => Collider::circle(width / 2.0),
     }
@@ -56,22 +71,19 @@ fn create_collider(shape: BlockShape, width: f32, height: f32) -> Collider {
 fn create_mesh(shape: BlockShape, width: f32, height: f32) -> Mesh {
     match shape {
         BlockShape::Rectangle => Rectangle::new(width, height).into(),
-        BlockShape::Triangle => Triangle2d::new(
-            Vec2::new(-width / 2.0, -height / 2.0),
-            Vec2::new(width / 2.0, -height / 2.0),
-            Vec2::new(0.0, height / 2.0),
-        )
-        .into(),
+        BlockShape::Triangle => {
+            let [a, b, c] = triangle_vertices(width, height);
+            Triangle2d::new(a, b, c).into()
+        }
         BlockShape::Trapezoid => {
-            let top_w = width * 0.6;
-            let (hw, thw, hh) = (width / 2.0, top_w / 2.0, height / 2.0);
+            let verts = trapezoid_vertices(width, height);
             Mesh::new(
                 bevy::mesh::PrimitiveTopology::TriangleList,
                 bevy::asset::RenderAssetUsages::default(),
             )
             .with_inserted_attribute(
                 Mesh::ATTRIBUTE_POSITION,
-                vec![[-hw, -hh, 0.0], [hw, -hh, 0.0], [thw, hh, 0.0], [-thw, hh, 0.0]],
+                verts.map(|(x, y)| [x, y, 0.0]).to_vec(),
             )
             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; 4])
             .with_inserted_attribute(
@@ -84,27 +96,32 @@ fn create_mesh(shape: BlockShape, width: f32, height: f32) -> Mesh {
     }
 }
 
+/// ランダムなカラーを選択
+fn random_block_color() -> Color {
+    let mut rng = rand::thread_rng();
+    let [r, g, b] = BLOCK_COLORS[rng.gen_range(0..BLOCK_COLORS.len())];
+    Color::srgb(r, g, b)
+}
+
+/// 新しいブロックをスポーンする
 pub fn spawn_block(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<ColorMaterial>>,
-    colors: &BlockColors,
     x: f32,
 ) {
-    let mut rng = rand::thread_rng();
-    let (shape, width, height) = random_block_shape();
-    let color = colors.0[rng.gen_range(0..colors.0.len())];
+    let (shape, width, height) = random_shape_and_size();
 
     commands.spawn((
         GameEntity,
         Block,
         ActiveBlock,
         Mesh2d(meshes.add(create_mesh(shape, width, height))),
-        MeshMaterial2d(materials.add(color)),
+        MeshMaterial2d(materials.add(random_block_color())),
         Transform::from_xyz(x, SPAWN_Y, 0.0),
         RigidBody::Kinematic,
         create_collider(shape, width, height),
-        Friction::new(0.8),
+        Friction::new(BLOCK_FRICTION),
         Restitution::new(0.0),
         SleepingDisabled,
     ));
